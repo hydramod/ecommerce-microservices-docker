@@ -1,0 +1,1 @@
+﻿fastapi==0.116.1fastapi>=0.115.0 uvicorn>=0.30.0

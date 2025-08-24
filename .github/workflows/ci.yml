@@ -1,0 +1,19 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  matrix-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [auth, catalog, cart, order, payment, shipping, notifications]
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -U pip
+      - run: pip install -e . pytest
+      - run: pytest -q
