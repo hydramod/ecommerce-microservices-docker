@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
-run_demo.py - Python version of the e-commerce microservices demo runner
+run_demo.py - End-to-end demo for the e-commerce microservices stack
+- Registers/logs in admin & customer
+- Creates category/product, restocks inventory
+- Customer adds to cart, checks out (creates shipment draft)
+- Simulates payment success (advances shipment to READY_TO_SHIP)
+- Dispatches shipment
+- Prints notification emails from MailHog (if available)
 """
 
 import requests
@@ -17,294 +23,330 @@ class DemoRunner:
         self.cart_url = f"{self.base_url}/cart"
         self.order_url = f"{self.base_url}/order"
         self.payment_url = f"{self.base_url}/payment"
-        
-        # Health check endpoints
+        self.shipping_url = f"{self.base_url}/shipping"
+        self.notifications_url = f"{self.base_url}/notifications"
+        self.mailhog_api = "http://localhost:8025/api/v2/messages"
+
+        # Health endpoints
         self.health_endpoints = {
-            "auth": f"{self.base_url}/auth/health",
-            "catalog": f"{self.base_url}/catalog/health",
-            "cart": f"{self.base_url}/cart/health",
-            "order": f"{self.base_url}/order/health",
-            "payment": f"{self.base_url}/payment/health"
+            "auth": f"{self.auth_url}/health",
+            "catalog": f"{self.catalog_url}/health",
+            "cart": f"{self.cart_url}/health",
+            "order": f"{self.order_url}/health",
+            "payment": f"{self.payment_url}/health",
+            "shipping": f"{self.shipping_url}/health",
+            "notifications": f"{self.notifications_url}/health",
         }
-        
+
         self.admin_email = "admin@example.com"
         self.admin_pass = "P@ssw0rd!"
         self.cust_email = "cust@example.com"
         self.cust_pass = "P@ssw0rd!"
-        
-        # Get internal key from environment or use default
-        self.internal_key = os.getenv("SVC_INTERNAL_KEY", "devkey")
-        
-        # Token storage
-        self.admin_access_token = None
-        self.cust_access_token = None
 
+        # Internal key (Catalog reserve)
+        self.internal_key = os.getenv("SVC_INTERNAL_KEY", "devkey")
+
+        # Tokens
+        self.admin_access_token: Optional[str] = None
+        self.cust_access_token: Optional[str] = None
+
+    # ---------- helpers ----------
     def show_step(self, title: str):
-        """Print a step header"""
         print(f"\n=== {title} ===")
 
     def mask_token(self, token: str) -> str:
-        """Mask a token for display"""
         if not token:
             return "<none>"
-        if len(token) <= 12:
-            return token
-        return f"{token[:8]}...{token[-6:]}"
+        return token if len(token) <= 12 else f"{token[:8]}...{token[-6:]}"
 
-    def call_api(self, method: str, url: str, headers: Optional[Dict] = None, 
-                 data: Optional[Any] = None, expected_status: List[int] = [200, 201, 202, 204]):
-        """Make an API call with detailed logging"""
-        print(f"\n-> {method} {url}")
-        
-        if headers:
-            print_headers = headers.copy()
-            if 'Authorization' in print_headers:
-                token = print_headers['Authorization'].replace('Bearer ', '')
-                print_headers['Authorization'] = f"Bearer {self.mask_token(token)}"
-            print(f"   Headers: {json.dumps(print_headers, indent=2)}")
-        else:
-            print("   Headers: <none>")
-            
-        if data:
-            print(f"   Body: {json.dumps(data, indent=2)}")
-        
+    def call_api(
+        self,
+        method: str,
+        url: str,
+        headers: Optional[Dict] = None,
+        data: Optional[Any] = None,
+        expected_status: List[int] = [200, 201, 202, 204],
+        quiet: bool = False,
+        timeout: int = 30,
+    ):
+        if not quiet:
+            print(f"\n-> {method} {url}")
+            if headers:
+                ph = headers.copy()
+                if "Authorization" in ph:
+                    tok = ph["Authorization"].replace("Bearer ", "")
+                    ph["Authorization"] = f"Bearer {self.mask_token(tok)}"
+                print(f"   Headers: {json.dumps(ph, indent=2)}")
+            else:
+                print("   Headers: <none>")
+            if data is not None:
+                print(f"   Body: {json.dumps(data, indent=2)}")
+
         try:
-            response = requests.request(
+            resp = requests.request(
                 method=method,
                 url=url,
                 headers=headers,
-                json=data if data else None,
-                timeout=30
+                json=data if isinstance(data, (dict, list)) else None,
+                timeout=timeout,
             )
-            
-            status_color = '\033[92m' if response.status_code in expected_status else '\033[93m'
-            print(f"   Status: {status_color}{response.status_code}\033[0m")
-            
-            try:
-                json_response = response.json()
-                print("   JSON:")
-                print(json.dumps(json_response, indent=2))
-                return {
-                    "status": response.status_code,
-                    "data": json_response,
-                    "raw": response.text
-                }
-            except json.JSONDecodeError:
-                if response.text:
-                    print("   Content:")
-                    print(response.text)
-                else:
-                    print("   Content: <empty>")
-                return {
-                    "status": response.status_code,
-                    "data": None,
-                    "raw": response.text
-                }
-                
-        except requests.exceptions.RequestException as e:
-            print(f"   Error: \033[91m{e}\033[0m")
-            return {
-                "status": None,
-                "data": None,
-                "raw": None,
-                "error": str(e)
-            }
+            if not quiet:
+                status_color = "\033[92m" if resp.status_code in expected_status else "\033[93m"
+                print(f"   Status: {status_color}{resp.status_code}\033[0m")
 
+            try:
+                js = resp.json()
+                if not quiet:
+                    print("   JSON:")
+                    print(json.dumps(js, indent=2))
+                return {"status": resp.status_code, "data": js, "raw": resp.text}
+            except json.JSONDecodeError:
+                if resp.text and not quiet:
+                    print("   Content:")
+                    print(resp.text)
+                return {"status": resp.status_code, "data": None, "raw": resp.text}
+        except requests.exceptions.RequestException as e:
+            if not quiet:
+                print(f"   Error: \033[91m{e}\033[0m")
+            return {"status": None, "data": None, "raw": None, "error": str(e)}
+
+    # ---------- flow ----------
     def preflight_health_checks(self):
-        """Check health of all services"""
         self.show_step("Preflight: service health")
-        
-        for service, url in self.health_endpoints.items():
+        for svc, url in self.health_endpoints.items():
             result = self.call_api("GET", url, expected_status=[200], quiet=True)
-            status = "OK" if result.get("status") == 200 else f"FAIL ({result.get('status')})"
-            color = '\033[92m' if status == "OK" else '\033[91m'
-            print(f"  - {service.ljust(8)} -> {color}{status}\033[0m")
+            ok = result.get("status") == 200
+            color = "\033[92m" if ok else "\033[91m"
+            status = "OK" if ok else f"FAIL ({result.get('status')})"
+            print(f"  - {svc.ljust(14)} -> {color}{status}\033[0m")
+
+        # Optional: MailHog
+        try:
+            r = requests.get(self.mailhog_api, timeout=3)
+            mh_ok = r.status_code == 200
+        except requests.exceptions.RequestException:
+            mh_ok = False
+        color = "\033[92m" if mh_ok else "\033[93m"
+        print(f"  - {'mailhog'.ljust(14)} -> {color}{'OK' if mh_ok else 'SKIP'}\033[0m")
 
     def run_demo(self):
-        """Run the complete demo workflow"""
         print("Starting E-commerce Microservices Demo")
         print("=" * 50)
-        
-        # Preflight checks
+
+        # Preflight
         self.preflight_health_checks()
-        
+
         # 1) Admin register + login
         self.show_step("Admin: register")
-        self.call_api("POST", f"{self.auth_url}/register", data={
-            "email": self.admin_email,
-            "password": self.admin_pass,
-            "role": "admin"
-        }, expected_status=[201, 409])
-        
+        self.call_api(
+            "POST",
+            f"{self.auth_url}/register",
+            data={"email": self.admin_email, "password": self.admin_pass, "role": "admin"},
+            expected_status=[201, 409],
+        )
+
         self.show_step("Admin: login")
-        login_result = self.call_api("POST", f"{self.auth_url}/login", data={
-            "email": self.admin_email,
-            "password": self.admin_pass
-        }, expected_status=[200])
-        
-        if login_result.get("data"):
-            self.admin_access_token = login_result["data"].get("access_token")
+        lr = self.call_api(
+            "POST", f"{self.auth_url}/login", data={"email": self.admin_email, "password": self.admin_pass}
+        )
+        if lr.get("data"):
+            self.admin_access_token = lr["data"].get("access_token")
             print(f"Admin access token: {self.mask_token(self.admin_access_token)}")
-        
-        # 2) Admin create category + product
-        auth_headers = {"Authorization": f"Bearer {self.admin_access_token}"} if self.admin_access_token else {}
-        
+
+        # 2) Admin creates category + product
+        admin_hdrs = {"Authorization": f"Bearer {self.admin_access_token}"} if self.admin_access_token else {}
+
         self.show_step("Admin: create category")
-        self.call_api("POST", f"{self.catalog_url}/v1/categories/", 
-                     headers=auth_headers, data={"name": "Shoes"}, expected_status=[201, 409])
-        
+        self.call_api(
+            "POST",
+            f"{self.catalog_url}/v1/categories/",
+            headers=admin_hdrs,
+            data={"name": "Shoes"},
+            expected_status=[201, 409],
+        )
+
         self.show_step("Admin: create product")
-        self.call_api("POST", f"{self.catalog_url}/v1/products/", headers=auth_headers, data={
-            "title": "Air Zoom",
-            "description": "Runner",
-            "price_cents": 12999,
-            "currency": "USD",
-            "sku": "SKU-001",
-            "category_id": 1,
-            "active": True
-        }, expected_status=[201, 409])
-        
-        # Quick sanity check
-        self.show_step("Sanity: fetch product #1 (gateway)")
+        self.call_api(
+            "POST",
+            f"{self.catalog_url}/v1/products/",
+            headers=admin_hdrs,
+            data={
+                "title": "Air Zoom",
+                "description": "Runner",
+                "price_cents": 12999,
+                "currency": "USD",
+                "sku": "SKU-001",
+                "category_id": 1,
+                "active": True,
+            },
+            expected_status=[201, 409],
+        )
+
+        # Quick sanity
+        self.show_step("Sanity: fetch product #1")
         self.call_api("GET", f"{self.catalog_url}/v1/products/1", expected_status=[200, 404])
-        
-        # 3) Admin restock inventory
+
+        # 3) Restock inventory (internal)
         self.show_step("Admin: restock inventory (X-Internal-Key + Authorization)")
-        internal_headers = auth_headers.copy()
-        internal_headers["X-Internal-Key"] = self.internal_key
-        
-        self.call_api("POST", f"{self.catalog_url}/v1/inventory/restock", 
-                     headers=internal_headers, data={
-                         "items": [{"product_id": 1, "qty": 50}]
-                     }, expected_status=[200])
-        
+        int_hdrs = admin_hdrs.copy()
+        int_hdrs["X-Internal-Key"] = self.internal_key
+        self.call_api(
+            "POST",
+            f"{self.catalog_url}/v1/inventory/restock",
+            headers=int_hdrs,
+            data={"items": [{"product_id": 1, "qty": 50}]},
+        )
+
         # 4) Customer register + login
         self.show_step("Customer: register")
-        self.call_api("POST", f"{self.auth_url}/register", data={
-            "email": self.cust_email,
-            "password": self.cust_pass
-        }, expected_status=[201, 409])
-        
+        self.call_api(
+            "POST",
+            f"{self.auth_url}/register",
+            data={"email": self.cust_email, "password": self.cust_pass},
+            expected_status=[201, 409],
+        )
+
         self.show_step("Customer: login")
-        cust_login = self.call_api("POST", f"{self.auth_url}/login", data={
-            "email": self.cust_email,
-            "password": self.cust_pass
-        }, expected_status=[200])
-        
-        if cust_login.get("data"):
-            self.cust_access_token = cust_login["data"].get("access_token")
+        clr = self.call_api(
+            "POST", f"{self.auth_url}/login", data={"email": self.cust_email, "password": self.cust_pass}
+        )
+        if clr.get("data"):
+            self.cust_access_token = clr["data"].get("access_token")
             print(f"Customer access token: {self.mask_token(self.cust_access_token)}")
-        
-        # 5) Customer add to cart
-        cust_headers = {"Authorization": f"Bearer {self.cust_access_token}"} if self.cust_access_token else {}
-        
+
+        # 5) Add to cart
+        cust_hdrs = {"Authorization": f"Bearer {self.cust_access_token}"} if self.cust_access_token else {}
+
         self.show_step("Customer: add to cart")
-        cart_result = self.call_api("POST", f"{self.cart_url}/v1/cart/items", 
-                                   headers=cust_headers, data={
-                                       "product_id": 1,
-                                       "qty": 2
-                                   }, expected_status=[200, 201, 404])
-        
-        if cart_result.get("status") == 404:
-            print("\n\033[93mHint: Cart returned 404. This often means the cart service can't reach catalog.")
-            print("      Ensure the cart container has CATALOG_BASE set correctly.\033[0m")
-        
-        # 6) Checkout
-        self.show_step("Customer: checkout")
-        checkout_result = self.call_api("POST", f"{self.order_url}/v1/orders/checkout", 
-                                       headers=cust_headers, expected_status=[200, 401])
-        
-        order_id = None
-        amount = None
-        if checkout_result.get("data"):
-            order_id = checkout_result["data"].get("order_id")
-            amount = checkout_result["data"].get("total_cents")
+        cart_res = self.call_api(
+            "POST",
+            f"{self.cart_url}/v1/cart/items",
+            headers=cust_hdrs,
+            data={"product_id": 1, "qty": 2},
+            expected_status=[200, 201, 404],
+        )
+        if cart_res.get("status") == 404:
+            print(
+                "\n\033[93mHint: Cart 404 often means cart cannot reach catalog. "
+                "Check CATALOG_BASE for the cart container.\033[0m"
+            )
+
+        # 6) Checkout (with shipping address body)
+        self.show_step("Customer: checkout (creates shipment draft)")
+        shipping_body = {
+            "address_line1": "1 Demo Street",
+            "address_line2": "",
+            "city": "Dublin",
+            "country": "IE",
+            "postcode": "D01XYZ",
+        }
+        co = self.call_api(
+            "POST",
+            f"{self.order_url}/v1/orders/checkout",
+            headers=cust_hdrs,
+            data=shipping_body,
+            expected_status=[200, 201],
+        )
+        order_id = co.get("data", {}).get("order_id") if co else None
+        amount = co.get("data", {}).get("total_cents") if co else None
         print(f"Order ID: {order_id}; Amount: {amount}")
-        
-        # 7) Payment: mock succeed
+
+        # 7) Payment mock succeed
         self.show_step("Payment: mock succeed")
         if order_id and amount:
-            self.call_api("POST", f"{self.payment_url}/v1/payments/mock-succeed", data={
-                "order_id": order_id,
-                "amount_cents": amount,
-                "currency": "USD"
-            }, expected_status=[200])
+            self.call_api(
+                "POST",
+                f"{self.payment_url}/v1/payments/mock-succeed",
+                data={"order_id": order_id, "amount_cents": amount, "currency": "USD"},
+            )
         else:
-            print("Skipping payment - no order ID or amount available")
-        
-        # Wait for processing
-        time.sleep(2)
-        
-        # 8) Check order status
+            print("Skipping payment - no order/amount")
+
+        # 8) Wait & poll shipping until READY_TO_SHIP
+        self.show_step("Shipping: wait for READY_TO_SHIP")
+        shipment_id = None
+        status = None
+        for _ in range(20):  # up to ~10 seconds
+            time.sleep(0.5)
+            q = self.call_api(
+                "GET",
+                f"{self.shipping_url}/v1/shipments?order_id={order_id}",
+                expected_status=[200],
+                quiet=True,
+            )
+            rows = q.get("data") or []
+            if rows:
+                shipment_id = rows[0]["id"]
+                status = rows[0]["status"]
+                print(f"  - Shipment {shipment_id} status: {status}")
+                if status == "READY_TO_SHIP":
+                    break
+        if not shipment_id:
+            print("\033[93mNo shipment found for order; check Shipping logs.\033[0m")
+
+        # 9) Dispatch once ready
+        self.show_step("Shipping: dispatch")
+        if shipment_id and status == "READY_TO_SHIP":
+            self.call_api(
+                "POST",
+                f"{self.shipping_url}/v1/shipments/{shipment_id}/dispatch",
+                expected_status=[200],
+            )
+        else:
+            print("Skipping dispatch - shipment not READY_TO_SHIP")
+
+        # 10) Check order status
+        time.sleep(1)
         self.show_step("Order: check status")
         if order_id:
             self.call_api("GET", f"{self.order_url}/v1/orders/{order_id}", expected_status=[200, 404])
         else:
-            print("Skipping order status check - no order ID available")
-        
+            print("Skipping order status check - no order ID")
+
+        # 11) Show last few emails from MailHog (optional)
+        self.show_step("Notifications: fetch emails from MailHog (optional)")
+        try:
+            r = requests.get(self.mailhog_api + "?limit=5", timeout=5)
+            if r.status_code == 200:
+                data = r.json()
+                total = data.get("total", 0)
+                items = data.get("items", [])
+                print(f"Found {total} emails. Showing up to 5 recent:")
+                for i, m in enumerate(items, 1):
+                    # Build "to" robustly (root .To or header "To")
+                    to_field = m.get("To") or []
+                    if to_field:
+                        def as_email(x):
+                            if isinstance(x, dict):
+                                return f"{x.get('Mailbox','')}@{x.get('Domain','')}".strip('@')
+                            return str(x)
+                        to = ", ".join(as_email(x) for x in to_field)
+                    else:
+                        headers_to = (m.get("Content", {}).get("Headers", {}).get("To") or [])
+                        if isinstance(headers_to, list):
+                            to = ", ".join(headers_to)
+                        elif isinstance(headers_to, str):
+                            to = headers_to
+                        else:
+                            to = ""
+
+                    # Subject can be a list[str] or a str in MailHog
+                    subj_field = m.get("Content", {}).get("Headers", {}).get("Subject", [])
+                    if isinstance(subj_field, list):
+                        subj = subj_field[0] if subj_field else ""
+                    elif isinstance(subj_field, str):
+                        subj = subj_field
+                    else:
+                        subj = ""
+
+                    print(f"  {i}. To: {to} | Subject: {subj}")
+            else:
+                print("MailHog not reachable or returned non-200.")
+        except requests.exceptions.RequestException:
+            print("MailHog not reachable. Skipping.")
+
         print("\n\033[92m=== DEMO COMPLETE ===\033[0m")
 
-    def call_api(self, method: str, url: str, headers: Optional[Dict] = None, 
-                 data: Optional[Any] = None, expected_status: List[int] = [200, 201, 202, 204], quiet: bool = False):
-        """Make an API call with detailed logging (quiet mode for health checks)"""
-        if not quiet:
-            print(f"\n-> {method} {url}")
-            
-            if headers:
-                print_headers = headers.copy()
-                if 'Authorization' in print_headers:
-                    token = print_headers['Authorization'].replace('Bearer ', '')
-                    print_headers['Authorization'] = f"Bearer {self.mask_token(token)}"
-                print(f"   Headers: {json.dumps(print_headers, indent=2)}")
-            else:
-                print("   Headers: <none>")
-                
-            if data:
-                print(f"   Body: {json.dumps(data, indent=2)}")
-        
-        try:
-            response = requests.request(
-                method=method,
-                url=url,
-                headers=headers,
-                json=data if data else None,
-                timeout=30
-            )
-            
-            if not quiet:
-                status_color = '\033[92m' if response.status_code in expected_status else '\033[93m'
-                print(f"   Status: {status_color}{response.status_code}\033[0m")
-            
-            try:
-                json_response = response.json()
-                if not quiet:
-                    print("   JSON:")
-                    print(json.dumps(json_response, indent=2))
-                return {
-                    "status": response.status_code,
-                    "data": json_response,
-                    "raw": response.text
-                }
-            except json.JSONDecodeError:
-                if response.text and not quiet:
-                    print("   Content:")
-                    print(response.text)
-                return {
-                    "status": response.status_code,
-                    "data": None,
-                    "raw": response.text
-                }
-                
-        except requests.exceptions.RequestException as e:
-            if not quiet:
-                print(f"   Error: \033[91m{e}\033[0m")
-            return {
-                "status": None,
-                "data": None,
-                "raw": None,
-                "error": str(e)
-            }
 
 if __name__ == "__main__":
-    demo = DemoRunner()
-    demo.run_demo()
+    DemoRunner().run_demo()

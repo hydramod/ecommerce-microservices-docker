@@ -10,7 +10,6 @@ Set-Location $Root
 if (-not $env:POSTGRES_DSN -or [string]::IsNullOrWhiteSpace($env:POSTGRES_DSN)) {
   $dotenvPath = Join-Path $Root "deploy\.env"
   $dsn = $null
-
   if (Test-Path $dotenvPath) {
     $line = Select-String -Path $dotenvPath -Pattern '^\s*POSTGRES_DSN\s*=' | Select-Object -First 1
     if ($line) {
@@ -20,11 +19,9 @@ if (-not $env:POSTGRES_DSN -or [string]::IsNullOrWhiteSpace($env:POSTGRES_DSN)) 
       $dsn = $raw
     }
   }
-
   if (-not $dsn -or [string]::IsNullOrWhiteSpace($dsn)) {
     $dsn = "postgresql+psycopg://postgres:postgres@localhost:5432/appdb"
   }
-
   $env:POSTGRES_DSN = $dsn
 }
 
@@ -34,8 +31,10 @@ $env:POSTGRES_DSN = ($env:POSTGRES_DSN -replace '@postgres:', '@localhost:')
 Write-Host "Using POSTGRES_DSN = $($env:POSTGRES_DSN)"
 Write-Host ">>> Running Alembic migrations"
 
-Set-Location "services/auth"    ; alembic upgrade head ; Set-Location $Root
-Set-Location "services/catalog" ; alembic upgrade head ; Set-Location $Root
-Set-Location "services/order"   ; alembic upgrade head ; Set-Location $Root
+Set-Location "services/auth"        ; alembic upgrade head ; Set-Location $Root
+Set-Location "services/catalog"     ; alembic upgrade head ; Set-Location $Root
+Set-Location "services/order"       ; alembic upgrade head ; Set-Location $Root
+# NEW: Shipping migrations
+Set-Location "services/shipping"    ; alembic upgrade head ; Set-Location $Root
 
 Write-Host "Done."

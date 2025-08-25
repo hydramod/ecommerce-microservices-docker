@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 from app.version import VERSION
+from app.api.routes import router as shipping_router
+from app.kafka import consumer as shipping_consumer
 
 app = FastAPI(title="Shipping Service", version=VERSION)
 
@@ -7,12 +9,23 @@ app = FastAPI(title="Shipping Service", version=VERSION)
 def health():
     return {"status": "ok"}
 
-@app.get('/shipping/health')
-def auth_health(): return {'status':'ok'}
+@app.get("/shipping/health")
+def auth_health():
+    return {"status": "ok"}
 
 @app.get("/v1/_info")
 def info():
     return {"service": "shipping", "version": VERSION}
+
+app.include_router(shipping_router)
+
+@app.on_event("startup")
+async def startup_event():
+    shipping_consumer.start()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    shipping_consumer.stop()
 
 @app.on_event("startup")
 async def startup_event():
