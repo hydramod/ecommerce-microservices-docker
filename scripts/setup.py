@@ -1,91 +1,61 @@
 #!/usr/bin/env python3
 """
-gen_service_reqs.py — generate requirements.txt for each service using pipreqs
-(Uses the pipreqs console script; avoids `python -m pipreqs` which fails on Windows.)
+setup.py — create venv and install all services in editable mode
 """
-import argparse, os, shutil, subprocess, sys
+import argparse, os, subprocess, sys
 from pathlib import Path
 
 SERVICES = ["auth", "catalog", "order", "cart", "payment", "shipping", "notifications"]
 
-def venv_bin(name: str) -> Path:
-    base = Path(sys.executable).parent
-    return base / (name + (".exe" if os.name == "nt" else ""))
-
-def ensure_pipreqs() -> str:
-    # Prefer the pipreqs binary in this interpreter's venv/bin or venv/Scripts
-    exe_path = venv_bin("pipreqs")
-    if exe_path.exists():
-        return str(exe_path)
-    # Otherwise, try PATH
-    found = shutil.which("pipreqs")
-    if found:
-        return found
-    # Install into current interpreter's environment
-    print("pipreqs not found. Installing into current environment...")
-    subprocess.run([sys.executable, "-m", "pip", "install", "pipreqs"], check=True)
-    # Try again
-    if exe_path.exists():
-        return str(exe_path)
-    found = shutil.which("pipreqs")
-    if found:
-        return found
-    print("Error: pipreqs installation succeeded but executable not found.", file=sys.stderr)
-    sys.exit(1)
-
-def run_pipreqs(pipreqs_exe: str, service_dir: Path) -> Path | None:
-    if not (service_dir / "app").exists():
-        return None
-    req_path = service_dir / "requirements.txt"
-    cmd = [
-        pipreqs_exe,
-        str(service_dir),
-        "--force",
-        "--encoding", "utf-8",
-        "--savepath", str(req_path),
-    ]
+def run(cmd, **kw):
     print(">>>", " ".join(cmd))
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True, **kw)
 
-    # Post-process: de-dup, sort, strip blanks and pkg-resources noise
-    lines = [ln.strip() for ln in req_path.read_text(encoding="utf-8").splitlines()]
-    lines = [ln for ln in lines if ln and not ln.startswith("#") and not ln.startswith("pkg-resources==")]
-    req_path.write_text("\n".join(sorted(set(lines))) + "\n", encoding="utf-8")
-    return req_path
-
-def combine_requirements(paths: list[Path], target: Path):
-    seen, out = set(), []
-    for p in paths:
-        if not p or not p.exists():
-            continue
-        for ln in p.read_text(encoding="utf-8").splitlines():
-            ln = ln.strip()
-            if not ln or ln in seen:
-                continue
-            seen.add(ln); out.append(ln)
-    target.write_text("\n".join(sorted(out)) + "\n", encoding="utf-8")
-    print(f"Combined requirements written to {target}")
+def venv_paths(venv_dir: Path):
+    if os.name == "nt":
+        pip = venv_dir / "Scripts" / "pip.exe"
+        python = venv_dir / "Scripts" / "python.exe"
+        activate = venv_dir / "Scripts" / "Activate.ps1"
+    else:
+        pip = venv_dir / "bin" / "pip"
+        python = venv_dir / "bin" / "python"
+        activate = venv_dir / "bin" / "activate"
+    return pip, python, activate
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--services", nargs="*", default=SERVICES, help="Subset of services")
-    ap.add_argument("--combine", action="store_true", help="Also create a combined requirements.txt at repo root")
+    ap.add_argument("--venv", default=".venv", help="Virtualenv directory")
+    ap.add_argument("--python", default=sys.executable, help="Python interpreter to create venv")
+    ap.add_argument("--skip-install", action="store_true", help="Skip installing services")
     args = ap.parse_args()
 
     repo_root = Path(__file__).resolve().parents[1]
-    pipreqs_exe = ensure_pipreqs()
+    venv_dir = repo_root / args.venv
 
-    generated: list[Path] = []
-    for s in args.services:
-        svc_dir = repo_root / "services" / s
-        if svc_dir.exists():
-            p = run_pipreqs(pipreqs_exe, svc_dir)
-            if p: generated.append(p)
+    print(f">>> Creating venv at {venv_dir} (if missing)")
+    if not venv_dir.exists():
+        run([args.python, "-m", "venv", str(venv_dir)])
 
-    if args.combine and generated:
-        combine_requirements(generated, repo_root / "requirements.txt")
+    pip, py, activate = venv_paths(venv_dir)
 
-    print("Done.")
+    print(">>> Upgrading pip")
+    run([str(pip), "install", "-U", "pip"])
+
+    # Optional: dev tools (uncomment if you want)
+    # run([str(pip), "install", "pre-commit", "ruff", "pytest"])
+
+    if not args.skip_install:
+        for s in SERVICES:
+            proj = repo_root / "services" / s / "pyproject.toml"
+            if proj.exists():
+                print(f">>> Installing services/{s} (editable)")
+                run([str(pip), "install", "-e", f"services/{s}"], cwd=repo_root)
+
+    print("\nSetup complete.")
+    if os.name == "nt":
+        print(f"Activate your venv with:\n  {activate}")
+    else:
+        print(f"Activate your venv with:\n  source {activate}")
 
 if __name__ == "__main__":
     main()

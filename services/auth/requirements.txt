@@ -1,8 +1,5 @@
-﻿"pydantic[email
-fastapi==0.116.1
-fastapi>=0.115.0
-passlib==1.7.4
-pydantic==2.11.7
 PyJWT==2.10.1
 SQLAlchemy==2.0.43
-uvicorn>=0.30.0
+fastapi==0.116.1
+passlib==1.7.4
+pydantic==2.11.7
