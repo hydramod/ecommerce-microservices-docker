@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from app.api.routes import router
 from app.kafka import consumer
+from prometheus_fastapi_instrumentator import Instrumentator
 
 app = FastAPI(title="Notifications Service")
 
@@ -19,6 +20,14 @@ def health():
 @app.get('/notifications/health')
 def auth_health(): return {'status':'ok'}
 
+@app.on_event("startup")
+async def _startup():
+    Instrumentator().instrument(app).expose(
+        app,
+        include_in_schema=False,
+        endpoint=f"notifications/metrics",
+        should_gzip=True,
+    )
 
 # Debug: Print all routes on startup
 @app.on_event("startup")

@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from app.version import VERSION
 from app.api import routes
 from app.kafka import consumer as payment_consumer
+from prometheus_fastapi_instrumentator import Instrumentator
 
 app = FastAPI(title="Order Service", version=VERSION)
 
@@ -17,6 +18,15 @@ def order_health():
 @app.get("/v1/_info")
 def info():
     return {"service": "order", "version": VERSION}
+
+@app.on_event("startup")
+async def _startup():
+    Instrumentator().instrument(app).expose(
+        app,
+        include_in_schema=False,
+        endpoint=f"{SERVICE_PREFIX}/metrics",
+        should_gzip=True,
+    )
 
 # Kafka event handlers
 @app.on_event("startup")

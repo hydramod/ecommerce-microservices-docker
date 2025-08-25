@@ -51,10 +51,63 @@ services:
     ports: ["9000:9000","9001:9001"]
     networks: [mesh]
 
-  # --- NEW: MailHog for dev SMTP (Notifications)
+  # Dev SMTP (Notifications)
   mailhog:
     image: mailhog/mailhog:v1.0.1
     ports: ["1025:1025","8025:8025"]
+    networks: [mesh]
+
+  # ---------- Monitoring ----------
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./monitoring/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - auth
+      - catalog
+      - order
+      - cart
+      - payment
+      - shipping
+      - notifications
+      - postgres-exporter
+      - redis-exporter
+      - kafka-exporter
+    networks: [mesh]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks: [mesh]
+    restart: unless-stopped
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-appdb}?sslmode=disable"
+    ports: ["9187:9187"]
+    depends_on: [postgres]
+    networks: [mesh]
+
+  redis-exporter:
+    image: bitnami/redis-exporter:latest
+    command: ["--redis.addr=redis://redis:6379"]
+    ports: ["9121:9121"]
+    depends_on: [redis]
+    networks: [mesh]
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    command:
+      - "--kafka.server=kafka:9092"
+    ports: ["9308:9308"]
+    depends_on: [kafka]
     networks: [mesh]
 
   auth:
@@ -109,7 +162,6 @@ services:
       POSTGRES_DSN: ${POSTGRES_DSN}
       KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP}
       SVC_INTERNAL_KEY: ${SVC_INTERNAL_KEY}
-      # NEW: tell Orders where to call Shipping
       SHIPPING_BASE: http://shipping:8000
     labels:
       - "traefik.http.routers.order.rule=PathPrefix(`/order`)"
@@ -136,10 +188,8 @@ services:
     build: ../services/shipping
     env_file: [.env]
     environment:
-      # Removed JWT_* (not needed here)
       POSTGRES_DSN: ${POSTGRES_DSN}
       KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP}
-      # Optional explicit topic names (defaults exist in code)
       TOPIC_ORDER_EVENTS: ${TOPIC_ORDER_EVENTS:-order.events}
       TOPIC_PAYMENT_EVENTS: ${TOPIC_PAYMENT_EVENTS:-payment.events}
       TOPIC_SHIPPING_EVENTS: ${TOPIC_SHIPPING_EVENTS:-shipping.events}
@@ -154,11 +204,9 @@ services:
     env_file: [.env]
     environment:
       KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP}
-      # SMTP for dev via MailHog
       SMTP_HOST: ${SMTP_HOST:-mailhog}
       SMTP_PORT: ${SMTP_PORT:-1025}
       FROM_EMAIL: ${FROM_EMAIL:-no-reply@example.local}
-      # Optional explicit topic names (defaults exist in code)
       TOPIC_ORDER_EVENTS: ${TOPIC_ORDER_EVENTS:-order.events}
       TOPIC_PAYMENT_EVENTS: ${TOPIC_PAYMENT_EVENTS:-payment.events}
       TOPIC_SHIPPING_EVENTS: ${TOPIC_SHIPPING_EVENTS:-shipping.events}

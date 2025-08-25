@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from app.version import VERSION
 from app.api import products, categories
 from app.api import inventory
+from prometheus_fastapi_instrumentator import Instrumentator
 
 app = FastAPI(title='Catalog Service', version=VERSION)
 
@@ -14,7 +15,15 @@ def auth_health(): return {'status':'ok'}
 @app.get('/v1/_info')
 def info(): return {'service':'catalog','version':VERSION}
 
-# Add to main.py
+@app.on_event("startup")
+async def _startup():
+    Instrumentator().instrument(app).expose(
+        app,
+        include_in_schema=False,
+        endpoint=f"{SERVICE_PREFIX}/metrics",
+        should_gzip=True,
+    )
+
 @app.on_event("startup")
 async def startup_event():
     for route in app.routes:
