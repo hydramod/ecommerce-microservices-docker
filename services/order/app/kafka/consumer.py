@@ -18,7 +18,7 @@ def process_event(ev: dict, db: Session):
         # Commit inventory in catalog
         items = [{"product_id": it.product_id, "qty": it.qty} for it in order.items]
         with httpx.Client(timeout=5.0) as client:
-            client.post(f"{settings.CATALOG_BASE}/v1/inventory/commit", json={"items": items}, headers={"X-Internal-Key": settings.INTERNAL_KEY})
+            client.post(f"{settings.CATALOG_BASE}/catalog/v1/inventory/commit", json={"items": items}, headers={"X-Internal-Key": settings.SVC_INTERNAL_KEY})
         order.status = "PAID"
         db.add(order); db.commit()
 

@@ -22,4 +22,4 @@ async def startup_event():
         if hasattr(route, "methods") and hasattr(route, "path"):
             print(f"{route.methods} {route.path}")
 
-app.include_router(cart_routes.router)
+app.include_router(cart_routes.router, prefix='/cart', tags=['cart'])

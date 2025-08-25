@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional, List
+from urllib.parse import urljoin
 import httpx
 
 from app.core.auth import get_current_identity
@@ -35,7 +36,7 @@ def get_my_cart(identity: dict = Depends(get_current_identity)):
 def add_item(payload: CartItemAdd, identity: dict = Depends(get_current_identity)):
     email = identity.get("sub")
     # fetch product from catalog to snapshot price/title
-    url = f"{settings.CATALOG_BASE}/v1/products/{payload.product_id}"
+    url = f"{settings.CATALOG_BASE}/catalog/v1/products/{payload.product_id}"
     try:
         with httpx.Client(timeout=5.0) as client:
             resp = client.get(url)

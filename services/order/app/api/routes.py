@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from typing import List
 from pydantic import BaseModel
 from redis import Redis
@@ -19,12 +19,10 @@ def get_db():
     try: yield db
     finally: db.close()
 
-def get_identity(auth: str | None = None) -> dict:
-    # FastAPI simpler approach: expect 'Authorization' header automatically?
-    # We'll accept it as dependency parameter (set in route signature).
-    if not auth or not auth.lower().startswith("bearer "):
+def get_identity_dep(authorization: str | None = Header(default=None, alias="Authorization")) -> dict:
+    if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Not authenticated")
-    token = auth.split(" ", 1)[1]
+    token = authorization.split(" ", 1)[1]
     try:
         payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
     except Exception:
@@ -43,8 +41,7 @@ class CheckoutResponse(BaseModel):
     currency: str
 
 @router.post("/v1/orders/checkout", response_model=CheckoutResponse)
-def checkout(authorization: str | None = None, db: Session = Depends(get_db)):
-    identity = get_identity(authorization)
+def checkout(identity: dict = Depends(get_identity_dep), db: Session = Depends(get_db)):
     email = identity.get("sub")
     # Read cart from Redis
     r = redis_client()
@@ -64,7 +61,7 @@ def checkout(authorization: str | None = None, db: Session = Depends(get_db)):
     reserve_req = {"items": [{"product_id": it["product_id"], "qty": it["qty"]} for it in items]}
     try:
         with httpx.Client(timeout=5.0) as client:
-            resp = client.post(f"{settings.CATALOG_BASE}/v1/inventory/reserve", json=reserve_req, headers={"X-Internal-Key": settings.INTERNAL_KEY})
+            resp = client.post(f"{settings.CATALOG_BASE}/catalog/v1/inventory/reserve", json=reserve_req, headers={"X-Internal-Key": settings.SVC_INTERNAL_KEY})
             if resp.status_code != 200:
                 raise HTTPException(status_code=resp.status_code, detail=resp.text)
     except httpx.RequestError:

@@ -224,7 +224,7 @@ class DemoRunner:
         # 7) Payment: mock succeed
         self.show_step("Payment: mock succeed")
         if order_id and amount:
-            self.call_api("POST", f"{self.payment_url}/payments/mock-succeed", data={
+            self.call_api("POST", f"{self.payment_url}/v1/payments/mock-succeed", data={
                 "order_id": order_id,
                 "amount_cents": amount,
                 "currency": "USD"
@@ -238,7 +238,7 @@ class DemoRunner:
         # 8) Check order status
         self.show_step("Order: check status")
         if order_id:
-            self.call_api("GET", f"{self.order_url}/orders/{order_id}", expected_status=[200, 404])
+            self.call_api("GET", f"{self.order_url}/v1/orders/{order_id}", expected_status=[200, 404])
         else:
             print("Skipping order status check - no order ID available")
         
