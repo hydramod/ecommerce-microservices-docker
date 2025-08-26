@@ -30,3 +30,5 @@ health:
 	@curl -s http://localhost/cart/health | jq . || true
 	@curl -s http://localhost/order/health | jq . || true
 	@curl -s http://localhost/payment/health | jq . || true
+	@curl -s http://localhost/shipping/health | jq . || true
+	@curl -s http://localhost/notifications/health | jq . || true
