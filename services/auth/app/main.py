@@ -4,7 +4,18 @@ from app.version import VERSION
 from app.api.v1 import routes_auth, routes_users
 from prometheus_fastapi_instrumentator import Instrumentator
 
+# Create instrumentator first
+instrumentator = Instrumentator()
+
 app = FastAPI(title='Auth Service', version=VERSION)
+
+# Instrument the app BEFORE adding routes or middleware
+instrumentator.instrument(app).expose(
+    app,
+    include_in_schema=False,
+    endpoint="/auth/metrics",
+    should_gzip=True,
+)
 
 # Add BOTH health endpoints for compatibility
 @app.get('/health')
@@ -15,15 +26,6 @@ def auth_health(): return {'status':'ok'}
 
 @app.get('/v1/_info')
 def info(): return {'service':'auth','version':VERSION}
-
-@app.on_event("startup")
-async def _startup():
-    Instrumentator().instrument(app).expose(
-        app,
-        include_in_schema=False,
-        endpoint=f"/auth/metrics",
-        should_gzip=True,
-    )
 
 # Debug: Print all routes on startup
 @app.on_event("startup")

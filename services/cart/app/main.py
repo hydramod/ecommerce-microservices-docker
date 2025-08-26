@@ -3,7 +3,18 @@ from app.version import VERSION
 from app.api import routes as cart_routes
 from prometheus_fastapi_instrumentator import Instrumentator
 
+# Create instrumentator first
+instrumentator = Instrumentator()
+
 app = FastAPI(title="Cart Service", version=VERSION)
+
+# Instrument the app BEFORE adding routes or middleware
+instrumentator.instrument(app).expose(
+    app,
+    include_in_schema=False,
+    endpoint="/cart/metrics",
+    should_gzip=True,
+)
 
 @app.get("/health")
 def health():
@@ -16,15 +27,7 @@ def auth_health(): return {'status':'ok'}
 def info():
     return {"service": "cart", "version": VERSION}
 
-@app.on_event("startup")
-async def _startup():
-    Instrumentator().instrument(app).expose(
-        app,
-        include_in_schema=False,
-        endpoint=f"cart/metrics",
-        should_gzip=True,
-    )
-
+# Debug: Print all routes on startup
 @app.on_event("startup")
 async def startup_event():
     for route in app.routes:

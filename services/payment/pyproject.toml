@@ -1,4 +1,3 @@
-
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
@@ -9,10 +8,11 @@ version = "0.1.0"
 description = "Payment mock service (Kafka events)"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.115.0",
-    "uvicorn>=0.30.0",
-    "pydantic>=2.5.0",
-    "kafka-python>=2.0.2",
+    "fastapi==0.116.1",
+    "uvicorn==0.35.0",
+    "pydantic==2.11.7",
+    "kafka-python==2.2.15",
+    "prometheus-fastapi-instrumentator==7.1.0",
 ]
 
 [tool.setuptools.packages.find]

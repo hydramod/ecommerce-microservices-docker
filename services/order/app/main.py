@@ -4,7 +4,18 @@ from app.api import routes
 from app.kafka import consumer as payment_consumer
 from prometheus_fastapi_instrumentator import Instrumentator
 
+# Create instrumentator first
+instrumentator = Instrumentator()
+
 app = FastAPI(title="Order Service", version=VERSION)
+
+# Instrument the app BEFORE adding routes or middleware
+instrumentator.instrument(app).expose(
+    app,
+    include_in_schema=False,
+    endpoint="/order/metrics",  # Fixed: removed undefined SERVICE_PREFIX variable
+    should_gzip=True,
+)
 
 # Health endpoints
 @app.get("/health")
@@ -18,15 +29,6 @@ def order_health():
 @app.get("/v1/_info")
 def info():
     return {"service": "order", "version": VERSION}
-
-@app.on_event("startup")
-async def _startup():
-    Instrumentator().instrument(app).expose(
-        app,
-        include_in_schema=False,
-        endpoint=f"{SERVICE_PREFIX}/metrics",
-        should_gzip=True,
-    )
 
 # Kafka event handlers
 @app.on_event("startup")

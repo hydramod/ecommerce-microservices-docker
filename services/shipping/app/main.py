@@ -4,7 +4,18 @@ from app.api.routes import router as shipping_router
 from app.kafka import consumer as shipping_consumer
 from prometheus_fastapi_instrumentator import Instrumentator
 
+# Create instrumentator first
+instrumentator = Instrumentator()
+
 app = FastAPI(title="Shipping Service", version=VERSION)
+
+# Instrument the app BEFORE adding routes or middleware
+instrumentator.instrument(app).expose(
+    app,
+    include_in_schema=False,
+    endpoint="/shipping/metrics",  # Fixed: removed undefined SERVICE_PREFIX variable
+    should_gzip=True,
+)
 
 @app.get("/health")
 def health():
@@ -17,15 +28,6 @@ def auth_health():
 @app.get("/v1/_info")
 def info():
     return {"service": "shipping", "version": VERSION}
-
-@app.on_event("startup")
-async def _startup():
-    Instrumentator().instrument(app).expose(
-        app,
-        include_in_schema=False,
-        endpoint=f"{SERVICE_PREFIX}/metrics",
-        should_gzip=True,
-    )
 
 app.include_router(shipping_router)
 
